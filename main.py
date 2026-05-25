@@ -1,9 +1,10 @@
 """Sequoia-X V2 主程序入口。
 
-三种运行模式：
+四种运行模式：
   python main.py               # 日常模式：8进程增量补数据 + 跑策略 + 邮件推送（2~3分钟）
   python main.py --backfill    # 回填模式：baostock 拉全市场历史K线（首次/补数据用，约12分钟）
   python main.py --sync        # 仅同步模式：拉取最新行情数据，不跑策略不推送
+  python main.py --analyze     # 个股分析模式：分析 watchlist.toml 中的持仓和观察股，发送分析邮件
 """
 
 import argparse
@@ -42,6 +43,11 @@ def main() -> None:
         action="store_true",
         help="仅同步模式：拉取最新行情数据，不跑策略不推送",
     )
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="个股分析模式：分析 watchlist.toml 中的持仓和观察股，发送分析邮件",
+    )
     args = parser.parse_args()
 
     try:
@@ -70,6 +76,30 @@ def main() -> None:
 
         if args.sync:
             logger.info("Sequoia-X V2 仅同步模式运行完成")
+            return
+
+        if args.analyze:
+            # ── 个股分析模式：同步数据 → 加载关注列表 → 分析 → 推送 ──
+            from sequoia_x.analysis.advisor import run_analysis
+            from sequoia_x.analysis.report import build_analysis_email
+            from sequoia_x.analysis.watchlist import load_watchlist
+            from sequoia_x.notify.mail_send import find_mail_send, run_mail_send
+
+            logger.info("进入个股分析模式...")
+            wl = load_watchlist(settings.watchlist_path)
+            if not wl.holdings and not wl.watchlist:
+                logger.info("关注列表为空，跳过分析")
+                return
+
+            holdings_results, watchlist_results = run_analysis(engine, wl)
+            html = build_analysis_email(holdings_results, watchlist_results)
+
+            exe = find_mail_send(settings.mail_send_path)
+            today = date.today()
+            total = len(holdings_results) + len(watchlist_results)
+            subject = f"Sequoia-X 个股分析 | {today} | {total} 只"
+            run_mail_send(exe, settings.mail_to, subject, html)
+            logger.info(f"个股分析邮件推送成功，共 {total} 只股票")
             return
 
         # 4. 策略列表（新增策略在此追加即可）

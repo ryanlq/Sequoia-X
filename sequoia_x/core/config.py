@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     start_date: str = "2024-01-01"
     mail_to: str  # 必填，收件人邮箱
     mail_send_path: str = ""  # 可选，手动指定 mail-send 路径，空则自动下载
+    watchlist_path: str = "watchlist.toml"
 
     model_config = SettingsConfigDict(
         env_file=".env",

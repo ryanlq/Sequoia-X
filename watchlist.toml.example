@@ -1,0 +1,23 @@
+# Sequoia-X 关注列表示例
+# 复制为 watchlist.toml 后编辑，仅 symbol 为必填字段
+
+# ── 持仓股 ──
+[[holdings]]
+symbol = "600519"
+name = "贵州茅台"
+cost_price = 1500.00
+
+[[holdings]]
+symbol = "000858"
+name = "五粮液"
+
+# ── 观察股（等待买入机会） ──
+[[watchlist]]
+symbol = "601318"
+name = "中国平安"
+target_price = 50.00
+note = "等待回调"
+
+[[watchlist]]
+symbol = "300750"
+name = "宁德时代"
