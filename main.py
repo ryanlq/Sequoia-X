@@ -1,8 +1,9 @@
 """Sequoia-X V2 主程序入口。
 
-两种运行模式：
-  python main.py               # 日常模式：8进程增量补数据 + 跑策略 + 飞书推送（2~3分钟）
+三种运行模式：
+  python main.py               # 日常模式：8进程增量补数据 + 跑策略 + 邮件推送（2~3分钟）
   python main.py --backfill    # 回填模式：baostock 拉全市场历史K线（首次/补数据用，约12分钟）
+  python main.py --sync        # 仅同步模式：拉取最新行情数据，不跑策略不推送
 """
 
 import argparse
@@ -18,7 +19,7 @@ socket.setdefaulttimeout(10.0)
 from sequoia_x.core.config import get_settings
 from sequoia_x.core.logger import get_logger
 from sequoia_x.data.engine import DataEngine
-from sequoia_x.notify.feishu import FeishuNotifier
+from sequoia_x.notify.email import EmailNotifier
 from sequoia_x.strategy.base import BaseStrategy
 from sequoia_x.strategy.high_tight_flag import HighTightFlagStrategy
 from sequoia_x.strategy.limit_up_shakeout import LimitUpShakeoutStrategy
@@ -35,6 +36,11 @@ def main() -> None:
         "--backfill",
         action="store_true",
         help="回填模式：通过 baostock 拉取全市场历史 K 线（约12分钟）",
+    )
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="仅同步模式：拉取最新行情数据，不跑策略不推送",
     )
     args = parser.parse_args()
 
@@ -57,10 +63,14 @@ def main() -> None:
             logger.info("Sequoia-X V2 回填模式运行完成")
             return
 
-        # ── 日常模式：单次 API 补今天 + 策略 + 推送 ──
+        # ── 日常模式 / 仅同步模式：拉取最新行情 ──
         logger.info("开始拉取最新快照...")
         count = engine.sync_today_bulk()
         logger.info(f"快照同步完成，写入 {count} 只股票")
+
+        if args.sync:
+            logger.info("Sequoia-X V2 仅同步模式运行完成")
+            return
 
         # 4. 策略列表（新增策略在此追加即可）
         strategies: list[BaseStrategy] = [
@@ -73,9 +83,10 @@ def main() -> None:
             PrivatePlacementStrategy(engine=engine, settings=settings),
         ]
 
-        notifier = FeishuNotifier(settings)
+        notifier = EmailNotifier(settings)
 
-        # 5. 遍历策略，有结果则推送至对应机器人
+        # 5. 遍历策略，收集所有有结果的策略
+        results: dict[str, list[str]] = {}
         for strategy in strategies:
             strategy_name = type(strategy).__name__
             logger.info(f"执行策略：{strategy_name}")
@@ -84,13 +95,12 @@ def main() -> None:
             logger.info(f"{strategy_name} 选出 {len(selected)} 只股票")
 
             if selected:
-                notifier.send(
-                    symbols=selected,
-                    strategy_name=strategy_name,
-                    webhook_key=strategy.webhook_key,
-                )
+                results[strategy_name] = selected
             else:
                 logger.info(f"{strategy_name} 无选股结果，跳过推送")
+
+        # 6. 合并为一封邮件发送
+        notifier.send_all(results)
 
     except Exception:
         try:

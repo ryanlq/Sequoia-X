@@ -95,11 +95,24 @@ class DataEngine:
     # ── 数据同步 ──
 
     def sync_today_bulk(self) -> int:
-        """多进程并行通过 baostock 拉取增量数据（后复权），写入 SQLite。"""
-        from datetime import date, timedelta
+        """多进程并行通过 baostock 拉取增量数据（后复权），写入 SQLite。
+
+        A 股收盘前运行会跳过当日数据，避免写入盘中不完整行情。
+        """
+        from datetime import date, datetime, timedelta
         from multiprocessing import Pool
 
-        today_str = date.today().strftime("%Y-%m-%d")
+        today = date.today()
+        today_str = today.strftime("%Y-%m-%d")
+
+        # A 股 15:00 收盘，baostock 约 15:30 后更新，取 16:00 作为安全阈值
+        if datetime.now().hour < 16:
+            logger.warning(
+                f"当前时间 {datetime.now().strftime('%H:%M')}，"
+                "A 股尚未收盘（或 baostock 未更新），跳过当日同步。"
+                "请在 16:00 后重新运行。"
+            )
+            return 0
 
         tasks = []
         with sqlite3.connect(self.db_path) as conn:

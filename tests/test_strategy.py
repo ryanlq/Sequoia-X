@@ -27,7 +27,7 @@ def test_strategy_run_returns_list_of_str(symbols: list[str]) -> None:
         settings = Settings(
             db_path=str(Path(tmp_dir) / "test.db"),
             start_date="2024-01-01",
-            feishu_webhook_url="https://example.com/hook",
+            mail_to="test@example.com",
         )
         engine = DataEngine(settings)
 

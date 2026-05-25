@@ -16,11 +16,8 @@ class UptrendLimitDownStrategy(BaseStrategy):
     2. 放量跌停：今日 close <= 昨日 close * 0.905
                 且今日 volume > 20日均量的 2.0 倍
 
-    Attributes:
-        webhook_key: 路由到 'limit_down' 专属飞书机器人。
     """
 
-    webhook_key: str = "limit_down"
     _MIN_BARS: int = 60  # 至少需要 60 根 K 线（60日均线）
 
     def run(self) -> list[str]:

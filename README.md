@@ -7,7 +7,7 @@
 ## 简介 | Introduction
 
 Sequoia-X V2 是面向 A 股市场的量化选股系统，基于现代 Python 工程化标准从零重构。
-系统以 OOP 架构、向量化计算和增量数据更新为核心设计原则，每日收盘后自动选股并推送至飞书群。
+系统以 OOP 架构、向量化计算和增量数据更新为核心设计原则，每日收盘后自动选股并通过邮件推送结果。
 
 数据层使用 [baostock](http://baostock.com)（免费、无需注册、无限流）拉取历史及增量日 K 数据（后复权），
 存储于本地 SQLite，彻底规避东方财富反爬问题。
@@ -17,7 +17,7 @@ Sequoia-X V2 是面向 A 股市场的量化选股系统，基于现代 Python �
 ## 两种运行模式
 
 ```bash
-python main.py               # 日常模式：8进程增量补数据 + 跑策略 + 飞书推送（2~3分钟）
+python main.py               # 日常模式：8进程增量补数据 + 跑策略 + 邮件推送（2~3分钟）
 python main.py --backfill     # 回填模式：全市场历史K线一次性灌入（约12分钟）
 ```
 
@@ -33,6 +33,7 @@ python main.py --backfill     # 回填模式：全市场历史K线一次性灌�
 | **LimitUpShakeout** | 涨停洗盘回踩确认 |
 | **UptrendLimitDown** | 上升趋势中的跌停反包 |
 | **RpsBreakout** | 欧奈尔 RPS 相对强度突破 |
+| **PrivatePlacement** | 定增公告监控 |
 
 ---
 
@@ -56,10 +57,25 @@ pip install .
 
 ```bash
 cp .env.example .env
-# 编辑 .env，填写飞书 Webhook URL
+# 编辑 .env，填写收件人邮箱 MAIL_TO
 ```
 
-### 3. 首次回填历史数据
+### 3. 配置 mail-send（SMTP 发件）
+
+系统会自动下载 [mail-send](https://github.com/ryanlq/smtp-send) CLI 工具到 `bin/` 目录。
+首次使用需配置 SMTP 凭据：
+
+```bash
+# 方式一：交互式初始化
+bin/mail-send-linux-amd64 init
+
+# 方式二：若已全局安装 mail-send
+mail-send init
+```
+
+配置文件保存在 `~/.mail-send.json`，包含 SMTP 服务器、端口、账号密码等信息。
+
+### 4. 首次回填历史数据
 
 ```bash
 python main.py --backfill
@@ -67,7 +83,7 @@ python main.py --backfill
 
 约 12 分钟完成 ~5200 只 A 股历史后复权日 K 数据回填。
 
-### 4. 日常运行
+### 5. 日常运行
 
 ```bash
 python main.py
@@ -88,6 +104,7 @@ Sequoia-X/
 ├── main.py                      # 入口：argparse 分发日常/回填模式
 ├── pyproject.toml               # 依赖声明 + ruff/pytest 配置
 ├── .env.example                 # 环境变量模板
+├── bin/                         # mail-send 二进制（自动下载，不入 git）
 ├── data/                        # SQLite 数据库（运行时生成，不入 git）
 ├── sequoia_x/
 │   ├── core/
@@ -102,9 +119,11 @@ Sequoia-X/
 │   │   ├── high_tight_flag.py   # 高窄旗形策略
 │   │   ├── limit_up_shakeout.py # 涨停洗盘策略
 │   │   ├── uptrend_limit_down.py # 上升跌停策略
-│   │   └── rps_breakout.py      # RPS 突破策略
+│   │   ├── rps_breakout.py      # RPS 突破策略
+│   │   └── private_placement.py # 定增公告策略
 │   └── notify/
-│       └── feishu.py            # 飞书 Webhook 推送
+│       ├── mail_send.py         # mail-send CLI 自动安装
+│       └── email.py             # 邮件推送器
 └── tests/                       # 属性测试（hypothesis）
 ```
 

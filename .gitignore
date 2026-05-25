@@ -36,3 +36,6 @@ build/
 
 # Hypothesis 测试缓存
 .hypothesis/
+
+# mail-send 二进制
+bin/
