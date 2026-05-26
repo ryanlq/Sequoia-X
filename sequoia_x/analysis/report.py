@@ -59,22 +59,24 @@ def _build_holdings_table(results: list[StockAnalysis]) -> str:
             f"<a href='{link}' target='_blank' style='text-decoration:none;color:#333'>{r.symbol}</a></td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{r.name}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{_fmt(r.current_price)}</td>"
+            f"<td style='padding:4px 10px;border:1px solid #ddd;'>{_fmt(r.stop_loss)}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{_fmt(r.indicators.get('ma20') if r.indicators else None)}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{_fmt_pnl(r.pnl_pct)}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;font-weight:bold;'>{r.recommendation}</td>"
-            f"<td style='padding:4px 10px;border:1px solid #ddd;'>{r.reason}</td>"
+            f"<td style='padding:4px 10px;border:1px solid #ddd;font-size:12px;'>{r.reason}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{r.trend}</td>"
             f"</tr>"
         )
 
     return f"""\
     <h3 style="margin-top:20px;margin-bottom:8px;">持仓股（{len(results)} 只，{action_count} 只需操作）</h3>
-    <table style="border-collapse:collapse; width:100%; max-width:900px; font-size:13px;">
+    <table style="border-collapse:collapse; width:100%; max-width:1000px; font-size:13px;">
       <thead>
         <tr style="background:#f0f0f0;">
           <th style='padding:4px 10px;border:1px solid #ddd;text-align:left;'>代码</th>
           <th style='padding:4px 10px;border:1px solid #ddd;text-align:left;'>名称</th>
           <th style='padding:4px 10px;border:1px solid #ddd;text-align:left;'>现价</th>
+          <th style='padding:4px 10px;border:1px solid #ddd;text-align:left;'>止损</th>
           <th style='padding:4px 10px;border:1px solid #ddd;text-align:left;'>MA20</th>
           <th style='padding:4px 10px;border:1px solid #ddd;text-align:left;'>盈亏</th>
           <th style='padding:4px 10px;border:1px solid #ddd;text-align:left;'>建议</th>
@@ -111,7 +113,7 @@ def _build_watchlist_table(results: list[StockAnalysis]) -> str:
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{_fmt(r.take_profit_1)}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{_fmt(r.take_profit_2)}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;font-weight:bold;'>{r.recommendation}</td>"
-            f"<td style='padding:4px 10px;border:1px solid #ddd;'>{r.reason}</td>"
+            f"<td style='padding:4px 10px;border:1px solid #ddd;font-size:12px;'>{r.reason}</td>"
             f"<td style='padding:4px 10px;border:1px solid #ddd;'>{r.trend}</td>"
             f"</tr>"
         )

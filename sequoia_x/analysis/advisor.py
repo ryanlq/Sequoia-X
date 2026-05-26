@@ -86,6 +86,34 @@ class StockAnalysis:
     pnl_pct: float | None = None       # 持仓股盈亏百分比
 
 
+def _indicators_brief(ind: dict) -> str:
+    """从指标中提取关键数据摘要，用于理由拼接。"""
+    rsi = ind.get("rsi", 50)
+    vol_ratio = ind.get("volume_ratio", 0)
+    vol_trend = ind.get("vol_trend", "")
+    dist_ma20 = ind.get("price_vs_mas", {}).get("ma20", 0) or 0
+    dist_ma60 = ind.get("price_vs_mas", {}).get("ma60")
+
+    parts = [f"RSI={rsi:.0f}"]
+
+    if vol_ratio > 1.5:
+        parts.append(f"放量({vol_ratio:.1f}倍)")
+    elif vol_ratio < 0.7:
+        parts.append("缩量")
+    else:
+        parts.append(vol_trend)
+
+    if dist_ma20:
+        sign = "+" if dist_ma20 > 0 else ""
+        parts.append(f"偏离MA20 {sign}{dist_ma20:.1f}%")
+
+    if dist_ma60 is not None:
+        sign = "+" if dist_ma60 > 0 else ""
+        parts.append(f"偏离MA60 {sign}{dist_ma60:.1f}%")
+
+    return "，".join(parts)
+
+
 def analyze_holding(ind: dict, entry: WatchlistEntry) -> tuple[str, str, float | None, float | None, float | None]:
     """分析持仓股，返回 (recommendation, reason, stop_loss, tp1, tp2)。"""
     price = ind["current_price"]
@@ -94,19 +122,24 @@ def analyze_holding(ind: dict, entry: WatchlistEntry) -> tuple[str, str, float |
     rsi = ind["rsi"]
     support_near = ind["support_near"]
     ma20 = ind["ma20"]
+    ma60 = ind.get("ma60")
+    brief = _indicators_brief(ind)
+
+    stop = round(max(support_near, price - 2 * atr), 2) if atr > 0 else round(support_near, 2)
+    tp1 = round(price + 2 * atr, 2) if atr > 0 else None
+    tp2 = round(price + 4 * atr, 2) if atr > 0 else None
 
     # ── SELL ──
-    if trend in ("强空头", "空头") and ind["price_vs_mas"].get("ma60") is not None and price < ind["ma60"]:
-        return "SELL", "趋势破位，跌破MA60，建议减仓或清仓", None, None, None
+    if trend in ("强空头", "空头") and ma60 and price < ma60:
+        return "SELL", f"趋势破位，跌破MA60({ma60:.2f})。{brief}", stop, tp1, tp2
 
-    if trend in ("空头",) and ind["volume_ratio"] > 2.0 and price < ind["ma20"]:
-        return "SELL", "空头趋势中放量下跌，资金出逃", None, None, None
+    if trend in ("空头",) and ind["volume_ratio"] > 2.0 and price < ma20:
+        return "SELL", f"空头放量下跌，资金出逃。{brief}", stop, tp1, tp2
 
     # ── TAKE_PROFIT ──
     dist_from_ma20 = ind["price_vs_mas"].get("ma20", 0) or 0
     if dist_from_ma20 > 15 and rsi > 70:
-        tp = round(price + 2 * atr, 2) if atr > 0 else None
-        return "TAKE_PROFIT", f"偏离MA20达{dist_from_ma20:.1f}%，RSI={rsi:.0f}超买，考虑分批止盈", None, tp, None
+        return "TAKE_PROFIT", f"偏离MA20达{dist_from_ma20:.1f}%且RSI超买，考虑分批止盈。{brief}", stop, tp1, tp2
 
     # ── HOLD ──
     reason_parts = []
@@ -115,16 +148,15 @@ def analyze_holding(ind: dict, entry: WatchlistEntry) -> tuple[str, str, float |
     else:
         reason_parts.append("趋势待确认")
 
-    key_level = f"支撑{support_near:.2f}" if support_near else ""
     if ma20 and price > ma20:
-        key_level = f"MA20支撑({ma20:.2f})"
-    reason_parts.append(key_level)
+        reason_parts.append(f"MA20支撑({ma20:.2f})")
+    else:
+        reason_parts.append(f"近支撑({support_near:.2f})")
 
-    stop = max(support_near, price - 2 * atr) if atr > 0 else support_near
-    tp1 = round(price + 2 * atr, 2) if atr > 0 else None
-    tp2 = round(price + 4 * atr, 2) if atr > 0 else None
+    reason_parts.append(f"跌破{stop:.2f}需警惕")
+    reason_parts.append(brief)
 
-    return "HOLD", "，".join(filter(None, reason_parts)), round(stop, 2), tp1, tp2
+    return "HOLD", "。".join(reason_parts), stop, tp1, tp2
 
 
 def analyze_watchlist_stock(ind: dict, entry: WatchlistEntry) -> tuple[str, str, float | None, float | None, float | None, float | None, float | None]:
@@ -134,10 +166,11 @@ def analyze_watchlist_stock(ind: dict, entry: WatchlistEntry) -> tuple[str, str,
     atr = ind["atr"]
     support_near = ind["support_near"]
     ma20 = ind["ma20"]
+    brief = _indicators_brief(ind)
 
     # ── AVOID ──
     if trend in ("强空头",):
-        return "AVOID", "空头排列，远离", None, None, None, None, None
+        return "AVOID", f"空头排列，暂时远离。{brief}", None, None, None, None, None
 
     # ── BUY ──
     if entry.target_price and price <= entry.target_price * 1.05:
@@ -146,7 +179,7 @@ def analyze_watchlist_stock(ind: dict, entry: WatchlistEntry) -> tuple[str, str,
         stop = round(buy_low - 2 * atr, 2) if atr > 0 else None
         tp1 = round(price + 2 * atr, 2) if atr > 0 else None
         tp2 = round(price + 4 * atr, 2) if atr > 0 else None
-        return "BUY", f"接近目标价{entry.target_price:.2f}，当前{price:.2f}", buy_low, buy_high, stop, tp1, tp2
+        return "BUY", f"接近目标价{entry.target_price:.2f}。{brief}", buy_low, buy_high, stop, tp1, tp2
 
     if trend in ("多头", "强多头") and ma20 and abs(price - ma20) / ma20 < 0.03 and ind["vol_trend"] != "缩量":
         buy_low = round(ma20 * 0.97, 2)
@@ -154,17 +187,19 @@ def analyze_watchlist_stock(ind: dict, entry: WatchlistEntry) -> tuple[str, str,
         stop = round(buy_low - 2 * atr, 2) if atr > 0 else None
         tp1 = round(price + 2 * atr, 2) if atr > 0 else None
         tp2 = round(price + 4 * atr, 2) if atr > 0 else None
-        return "BUY", "回踩MA20附近，量能健康", buy_low, buy_high, stop, tp1, tp2
+        return "BUY", f"回踩MA20附近，量能健康。{brief}", buy_low, buy_high, stop, tp1, tp2
 
-    # ── WAIT ──
+    # ── WAIT ── 告诉用户等什么价位
     dist = ind["price_vs_mas"].get("ma20", 0) or 0
-    if dist > 10:
-        return "WAIT", f"偏离MA20达{dist:.1f}%，等待回调", None, None, None, None, None
+    if dist > 10 and ma20:
+        return "WAIT", f"偏离MA20达{dist:.1f}%，等待回调至{ma20:.2f}附近。{brief}", None, None, None, None, None
 
     if trend in ("空头",):
-        return "WAIT", "趋势偏弱，等待反转信号", None, None, None, None, None
+        return "WAIT", f"趋势偏弱，等待MA20拐头再考虑。{brief}", None, None, None, None, None
 
-    return "WAIT", "暂无明显买入信号", None, None, None, None, None
+    # 多头但暂无明确买入点，给出关注价位
+    watch_price = f"关注{ma20:.2f}附近企稳机会" if ma20 else "等待明确信号"
+    return "WAIT", f"{watch_price}。{brief}", None, None, None, None, None
 
 
 def run_analysis(engine: DataEngine, watchlist: Watchlist) -> tuple[list[StockAnalysis], list[StockAnalysis]]:

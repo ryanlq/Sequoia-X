@@ -100,9 +100,9 @@ class EmailNotifier:
 </html>"""
 
     def _ensure_mail_send(self) -> str:
-        """懒加载：首次调用时检测/下载 mail-send。"""
+        """懒加载：首次调用时检测 olk 是否可用。"""
         if self._mail_send_path is None:
-            self._mail_send_path = find_mail_send(self.settings.mail_send_path)
+            self._mail_send_path = find_mail_send()
         return self._mail_send_path
 
     def send_all(self, results: dict[str, list[str]]) -> None:
