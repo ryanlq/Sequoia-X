@@ -9,9 +9,7 @@ from datetime import date
 from typing import Optional
 
 import typer
-from dotenv import load_dotenv
 
-load_dotenv()
 socket.setdefaulttimeout(10.0)
 
 app = typer.Typer(
@@ -42,6 +40,16 @@ def _get_deps():
     engine = DataEngine(settings)
     logger = get_logger(__name__)
     return engine, settings, logger
+
+
+def _require_mail(settings) -> None:
+    """邮件推送前检查 mail_to 是否已配置。"""
+    if not settings.mail_to:
+        typer.echo(
+            "未配置 mail_to。请在 .env 或 ~/.config/sequoia-x/.env 中设置 MAIL_TO=<email>",
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 # Strategy registry: name → (class, description)
@@ -126,6 +134,7 @@ def daily(
         render_rich_table("Sequoia-X 日常运行结果", ["策略", "数量", "股票"], rows)
 
     if not no_email and results:
+        _require_mail(settings)
         from sequoia_x.notify.email import EmailNotifier
 
         notifier = EmailNotifier(settings)
@@ -191,6 +200,7 @@ def scan(
         render_rich_table("策略扫描结果", ["策略", "数量", "股票"], rows)
 
     if not no_email and results:
+        _require_mail(settings)
         from sequoia_x.notify.email import EmailNotifier
 
         notifier = EmailNotifier(settings)
@@ -231,6 +241,7 @@ def analyze(
         _render_analysis_tables(holdings_results, watchlist_results)
 
     if not no_email:
+        _require_mail(settings)
         from sequoia_x.analysis.report import build_analysis_email
         from sequoia_x.notify.mail_send import find_mail_send, run_mail_send
 

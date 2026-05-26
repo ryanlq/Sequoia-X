@@ -21,15 +21,14 @@ def test_env_overrides_default(db_path: str, monkeypatch) -> None:
     assert s.db_path == db_path
 
 
-# Feature: sequoia-x-v2, Property 2: 缺失必填字段触发 ValidationError
-def test_missing_required_field_raises() -> None:
-    """属性 2：缺少 mail_to 时，实例化 Settings 应抛出 ValidationError。"""
+# Feature: sequoia-x-v2, Property 2: mail_to 默认为空字符串（可选字段）
+def test_mail_to_defaults_empty() -> None:
+    """属性 2：mail_to 未配置时默认为空字符串，不抛异常。"""
     from sequoia_x.core.config import Settings
     env_backup = os.environ.pop("MAIL_TO", None)
     try:
-        with pytest.raises(ValidationError) as exc_info:
-            Settings(_env_file=None)
-        assert "mail_to" in str(exc_info.value).lower()
+        s = Settings(_env_file=None)
+        assert s.mail_to == ""
     finally:
         if env_backup is not None:
             os.environ["MAIL_TO"] = env_backup
