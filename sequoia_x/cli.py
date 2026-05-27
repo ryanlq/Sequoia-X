@@ -109,7 +109,7 @@ def _run_all_strategies(engine, settings) -> dict[str, list[str]]:
 @app.command()
 def daily(
     format: str = FormatOption,
-    no_email: bool = typer.Option(False, "--no-email", help="跳过邮件推送"),
+    email: bool = typer.Option(False, "--email", help="发送策略邮件"),
 ) -> None:
     """日常模式：同步数据 + 跑策略 + 邮件推送"""
     engine, settings, logger = _get_deps()
@@ -124,6 +124,10 @@ def daily(
     for name, symbols in results.items():
         logger.info(f"{name} 选出 {len(symbols)} 只股票")
 
+    # 保存 scan 结果缓存
+    from sequoia_x.core.cache import save_scan_results
+    save_scan_results(results)
+
     from sequoia_x.output import render_json, render_rich_table
 
     if format == "json":
@@ -133,7 +137,7 @@ def daily(
         rows.append(["同步", str(count), "—"])
         render_rich_table("Sequoia-X 日常运行结果", ["策略", "数量", "股票"], rows)
 
-    if not no_email and results:
+    if email and results:
         _require_mail(settings)
         from sequoia_x.notify.email import EmailNotifier
 
@@ -181,12 +185,28 @@ def backfill(
 @app.command()
 def scan(
     format: str = FormatOption,
-    no_email: bool = typer.Option(False, "--no-email", help="跳过邮件推送"),
+    email: bool = typer.Option(False, "--email", help="发送策略邮件"),
+    cached: bool = typer.Option(False, "--cached", help="使用缓存结果（1天内有效）"),
 ) -> None:
-    """扫描模式：运行所有策略（不同步数据）"""
+    """扫描模式：运行所有策略（不同步数据）。加 --cached 使用缓存。"""
     engine, settings, logger = _get_deps()
 
-    results = _run_all_strategies(engine, settings)
+    results: dict[str, list[str]] = {}
+
+    if cached:
+        from sequoia_x.core.cache import load_scan_results
+        cached_results = load_scan_results()
+        if cached_results is not None:
+            results = cached_results
+            logger.info("使用缓存的扫描结果")
+        else:
+            logger.info("缓存已过期或不存在，执行全量扫描")
+
+    if not results:
+        results = _run_all_strategies(engine, settings)
+        # 保存缓存
+        from sequoia_x.core.cache import save_scan_results
+        save_scan_results(results)
 
     for name, symbols in results.items():
         logger.info(f"{name} 选出 {len(symbols)} 只股票")
@@ -199,7 +219,7 @@ def scan(
         rows = [[name, str(len(symbols)), ", ".join(symbols[:10])] for name, symbols in results.items()]
         render_rich_table("策略扫描结果", ["策略", "数量", "股票"], rows)
 
-    if not no_email and results:
+    if email and results:
         _require_mail(settings)
         from sequoia_x.notify.email import EmailNotifier
 
@@ -210,9 +230,9 @@ def scan(
 @app.command()
 def analyze(
     format: str = FormatOption,
-    no_email: bool = typer.Option(False, "--no-email", help="跳过邮件推送"),
+    email: bool = typer.Option(False, "--email", help="发送分析邮件"),
 ) -> None:
-    """个股分析模式：分析 watchlist 中的持仓和观察股"""
+    """个股分析模式：分析 watchlist 中的持仓和观察股。加 --email 发送邮件。"""
     engine, settings, logger = _get_deps()
 
     from sequoia_x.analysis.advisor import run_analysis
@@ -240,7 +260,7 @@ def analyze(
     else:
         _render_analysis_tables(holdings_results, watchlist_results)
 
-    if not no_email:
+    if email:
         _require_mail(settings)
         from sequoia_x.analysis.report import build_analysis_email
         from sequoia_x.notify.mail_send import find_mail_send, run_mail_send
@@ -250,37 +270,6 @@ def analyze(
         subject = f"Sequoia-X 个股分析 | {date.today()} | {total} 只"
         run_mail_send(exe, settings.mail_to, subject, html)
         logger.info(f"个股分析邮件推送成功，共 {total} 只股票")
-
-
-@app.command()
-def report(
-    format: str = FormatOption,
-) -> None:
-    """报告模式：分析 watchlist 并展示结果（不发邮件）"""
-    engine, settings, logger = _get_deps()
-
-    from sequoia_x.analysis.advisor import run_analysis
-    from sequoia_x.analysis.watchlist import load_watchlist
-
-    wl = load_watchlist(settings.watchlist_path)
-    if not wl.holdings and not wl.watchlist:
-        from sequoia_x.output import render_json
-
-        if format == "json":
-            render_json({"holdings": [], "watchlist": []})
-        return
-
-    holdings_results, watchlist_results = run_analysis(engine, wl)
-
-    from sequoia_x.output import render_json
-
-    if format == "json":
-        render_json({
-            "holdings": [dataclasses.asdict(r) for r in holdings_results],
-            "watchlist": [dataclasses.asdict(r) for r in watchlist_results],
-        })
-    else:
-        _render_analysis_tables(holdings_results, watchlist_results)
 
 
 def _render_analysis_tables(holdings_results, watchlist_results) -> None:

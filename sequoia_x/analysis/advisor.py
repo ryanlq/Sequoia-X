@@ -13,57 +13,63 @@ logger = get_logger(__name__)
 def _get_actual_price(symbol: str) -> float | None:
     """通过 baostock 获取最新真实（不复权）收盘价。"""
     import baostock as bs
+    import contextlib
+    import io
 
     bs_code = DataEngine._to_baostock_code(symbol)
-    lg = bs.login()
-    if lg.error_code != "0":
-        return None
-    try:
-        rs = bs.query_history_k_data_plus(
-            bs_code,
-            "date,close",
-            start_date="2026-01-01",
-            end_date="2030-12-31",
-            frequency="d",
-            adjustflag="3",  # 不复权
-        )
-        last_close = None
-        while rs.next():
-            last_close = rs.get_row_data()[1]
-        return float(last_close) if last_close else None
-    except Exception:
-        return None
-    finally:
-        bs.logout()
-
-
-def _batch_actual_prices(symbols: list[str]) -> dict[str, float]:
-    """批量获取多只股票的真实收盘价。"""
-    import baostock as bs
-
-    if not symbols:
-        return {}
-
-    bs.login()
-    result: dict[str, float] = {}
-    try:
-        for symbol in symbols:
-            bs_code = DataEngine._to_baostock_code(symbol)
+    with contextlib.redirect_stdout(io.StringIO()):
+        lg = bs.login()
+        if lg.error_code != "0":
+            return None
+        try:
             rs = bs.query_history_k_data_plus(
                 bs_code,
                 "date,close",
                 start_date="2026-01-01",
                 end_date="2030-12-31",
                 frequency="d",
-                adjustflag="3",
+                adjustflag="3",  # 不复权
             )
             last_close = None
             while rs.next():
                 last_close = rs.get_row_data()[1]
-            if last_close:
-                result[symbol] = float(last_close)
-    finally:
-        bs.logout()
+            return float(last_close) if last_close else None
+        except Exception:
+            return None
+        finally:
+            bs.logout()
+
+
+def _batch_actual_prices(symbols: list[str]) -> dict[str, float]:
+    """批量获取多只股票的真实收盘价。"""
+    import baostock as bs
+    import contextlib
+    import io
+
+    if not symbols:
+        return {}
+
+    result: dict[str, float] = {}
+    with contextlib.redirect_stdout(io.StringIO()):
+        bs.login()
+        try:
+            for symbol in symbols:
+                bs_code = DataEngine._to_baostock_code(symbol)
+                rs = bs.query_history_k_data_plus(
+                    bs_code,
+                    "date,close",
+                    start_date="2026-01-01",
+                    end_date="2030-12-31",
+                    frequency="d",
+                    adjustflag="3",
+                )
+                last_close = None
+                while rs.next():
+                    last_close = rs.get_row_data()[1]
+                if last_close:
+                    result[symbol] = float(last_close)
+        finally:
+            bs.logout()
     return result
 
 
@@ -74,10 +80,11 @@ class StockAnalysis:
     symbol: str
     name: str
     current_price: float
-    indicators: dict | None
-    recommendation: str       # HOLD/SELL/TAKE_PROFIT 或 BUY/WAIT/AVOID
-    reason: str
-    trend: str
+    cost_price: float | None = None
+    indicators: dict | None = None
+    recommendation: str = ""       # HOLD/SELL/TAKE_PROFIT 或 BUY/WAIT/AVOID
+    reason: str = ""
+    trend: str = ""
     stop_loss: float | None = None
     take_profit_1: float | None = None
     take_profit_2: float | None = None
@@ -282,13 +289,18 @@ def _analyze_one(
     actual_support = _convert(ind["support_near"], ratio)
     actual_atr = _convert(ind["atr"], ratio)
 
-    # 构建供建议逻辑使用的指标（已转换为真实价格）
-    real_ind = {
+    # 所有价格相关指标统一转换为真实价格
+    real_indicators = {
         **ind,
         "current_price": round(actual, 2) if actual else adj_price,
+        "ma5": _convert(ind["ma5"], ratio),
+        "ma10": _convert(ind["ma10"], ratio),
         "ma20": actual_ma20,
+        "ma60": _convert(ind.get("ma60"), ratio),
         "atr": actual_atr if actual_atr else ind["atr"],
         "support_near": actual_support if actual_support else ind["support_near"],
+        "support_medium": _convert(ind.get("support_medium"), ratio),
+        "resistance_near": _convert(ind.get("resistance_near"), ratio),
     }
 
     pnl_pct = None
@@ -296,19 +308,21 @@ def _analyze_one(
         pnl_pct = round((actual - entry.cost_price) / entry.cost_price * 100, 2)
 
     if is_holding:
-        rec, reason, stop, tp1, tp2 = analyze_holding(real_ind, entry)
+        rec, reason, stop, tp1, tp2 = analyze_holding(real_indicators, entry)
         return StockAnalysis(
-            symbol=symbol, name=name, current_price=real_ind["current_price"],
-            indicators={**ind, "ma20": actual_ma20}, recommendation=rec, reason=reason,
+            symbol=symbol, name=name, current_price=real_indicators["current_price"],
+            cost_price=entry.cost_price, indicators=real_indicators,
+            recommendation=rec, reason=reason,
             trend=ind["trend"], stop_loss=stop,
             take_profit_1=tp1, take_profit_2=tp2,
             pnl_pct=pnl_pct,
         )
     else:
-        rec, reason, buy_low, buy_high, stop, tp1, tp2 = analyze_watchlist_stock(real_ind, entry)
+        rec, reason, buy_low, buy_high, stop, tp1, tp2 = analyze_watchlist_stock(real_indicators, entry)
         return StockAnalysis(
-            symbol=symbol, name=name, current_price=real_ind["current_price"],
-            indicators={**ind, "ma20": actual_ma20}, recommendation=rec, reason=reason,
+            symbol=symbol, name=name, current_price=real_indicators["current_price"],
+            cost_price=entry.cost_price, indicators=real_indicators,
+            recommendation=rec, reason=reason,
             trend=ind["trend"], stop_loss=stop,
             take_profit_1=tp1, take_profit_2=tp2,
             buy_zone_low=buy_low, buy_zone_high=buy_high,
