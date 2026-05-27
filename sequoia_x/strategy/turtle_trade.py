@@ -29,35 +29,38 @@ class TurtleTradeStrategy(BaseStrategy):
         from datetime import date
 
         import baostock as bs
+        import contextlib
+        import io
 
         today_str = date.today().strftime("%Y-%m-%d")
         market_caps: dict[str, float] = {}
 
-        bs.login()
-        try:
-            for symbol in symbols:
-                bs_code = self.engine._to_baostock_code(symbol)
-                rs = bs.query_history_k_data_plus(
-                    bs_code,
-                    "close,volume,turn",
-                    start_date=today_str,
-                    end_date=today_str,
-                    frequency="d",
-                    adjustflag="3",  # 不复权，真实价格
-                )
-                while rs.next():
-                    row = rs.get_row_data()
-                    try:
-                        close = float(row[0])
-                        volume = float(row[1])
-                        turn = float(row[2])
-                        if turn > 0:
-                            circulating_shares = volume / (turn / 100)
-                            market_caps[symbol] = circulating_shares * close
-                    except (ValueError, ZeroDivisionError):
-                        continue
-        finally:
-            bs.logout()
+        with contextlib.redirect_stdout(io.StringIO()):
+            bs.login()
+            try:
+                for symbol in symbols:
+                    bs_code = self.engine._to_baostock_code(symbol)
+                    rs = bs.query_history_k_data_plus(
+                        bs_code,
+                        "close,volume,turn",
+                        start_date=today_str,
+                        end_date=today_str,
+                        frequency="d",
+                        adjustflag="3",  # 不复权，真实价格
+                    )
+                    while rs.next():
+                        row = rs.get_row_data()
+                        try:
+                            close = float(row[0])
+                            volume = float(row[1])
+                            turn = float(row[2])
+                            if turn > 0:
+                                circulating_shares = volume / (turn / 100)
+                                market_caps[symbol] = circulating_shares * close
+                        except (ValueError, ZeroDivisionError):
+                            continue
+            finally:
+                bs.logout()
 
         return market_caps
 

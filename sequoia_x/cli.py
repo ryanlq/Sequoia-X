@@ -52,6 +52,34 @@ def _require_mail(settings) -> None:
         raise typer.Exit(1)
 
 
+def _log_filter(board: str | None, min_turnover: float | None) -> None:
+    """打印过滤条件日志。"""
+    from sequoia_x.core.logger import get_logger
+    logger = get_logger(__name__)
+    parts = []
+    if board:
+        parts.append(f"板块={board}")
+    if min_turnover is not None:
+        parts.append(f"成交额>={min_turnover}万")
+    if parts:
+        logger.info(f"过滤条件: {', '.join(parts)}")
+
+
+def _apply_min_strategies(
+    results: dict[str, list[str]],
+    min_strategies: int | None,
+) -> dict[str, list[str]]:
+    """过滤掉被少于 min_strategies 个策略选中的股票。"""
+    if min_strategies is None or min_strategies <= 1:
+        return results
+    from collections import Counter
+    counts: Counter[str] = Counter()
+    for symbols in results.values():
+        counts.update(symbols)
+    qualified = {s for s, n in counts.items() if n >= min_strategies}
+    return {name: [s for s in symbols if s in qualified] for name, symbols in results.items()}
+
+
 # Strategy registry: name → (class, description)
 _STRATEGY_MAP: dict[str, tuple[type, str]] = {}
 
@@ -90,14 +118,38 @@ def _instantiate_strategies(engine, settings) -> list:
     return result
 
 
-def _run_all_strategies(engine, settings) -> dict[str, list[str]]:
-    """Run all strategies and return {name: [symbols]}."""
+def _run_all_strategies(
+    engine, settings,
+    board: str | None = None,
+    min_turnover: float | None = None,
+) -> dict[str, list[str]]:
+    """Run all strategies and return {name: [symbols]}.
+
+    board/min_turnover 通过两层机制过滤：
+    1. Monkey-patch engine.get_local_symbols 让基于它的策略只扫描目标股票
+    2. 后处理：对直接读 DB 的策略结果做统一过滤
+    """
+    # 构建允许的股票池
+    allowed: set[str] | None = None
+    if board or min_turnover is not None:
+        allowed = set(engine.get_local_symbols(board=board, min_turnover=min_turnover))
+
+    # 保存原始方法，注入过滤参数
+    original = engine.get_local_symbols
+    if allowed is not None:
+        engine.get_local_symbols = lambda: list(allowed)
+
     results: dict[str, list[str]] = {}
-    for strategy in _instantiate_strategies(engine, settings):
-        name = type(strategy).__name__
-        selected = strategy.run()
-        if selected:
-            results[name] = selected
+    try:
+        for strategy in _instantiate_strategies(engine, settings):
+            name = type(strategy).__name__
+            selected = strategy.run()
+            if selected and allowed is not None:
+                selected = [s for s in selected if s in allowed]
+            if selected:
+                results[name] = selected
+    finally:
+        engine.get_local_symbols = original
     return results
 
 
@@ -110,6 +162,9 @@ def _run_all_strategies(engine, settings) -> dict[str, list[str]]:
 def daily(
     format: str = FormatOption,
     email: bool = typer.Option(False, "--email", help="发送策略邮件"),
+    board: str = typer.Option(None, "--board", help="板块过滤: main,chinext,star,bse"),
+    min_turnover: float = typer.Option(None, "--min-turnover", help="最低日均成交额（万元）"),
+    min_strategies: int = typer.Option(None, "--min-strategies", help="至少被N个策略选中"),
 ) -> None:
     """日常模式：同步数据 + 跑策略 + 邮件推送"""
     engine, settings, logger = _get_deps()
@@ -118,15 +173,19 @@ def daily(
     count = engine.sync_today_bulk()
     logger.info(f"快照同步完成，写入 {count} 只股票")
 
-    logger.info("开始执行策略...")
-    results = _run_all_strategies(engine, settings)
+    _log_filter(board, min_turnover)
+    results = _run_all_strategies(
+        engine, settings,
+        board=board,
+        min_turnover=min_turnover * 10000 if min_turnover else None,
+    )
+    results = _apply_min_strategies(results, min_strategies)
 
     for name, symbols in results.items():
         logger.info(f"{name} 选出 {len(symbols)} 只股票")
 
-    # 保存 scan 结果缓存
     from sequoia_x.core.cache import save_scan_results
-    save_scan_results(results)
+    save_scan_results(results, board=board, min_turnover=min_turnover)
 
     from sequoia_x.output import render_json, render_rich_table
 
@@ -187,6 +246,9 @@ def scan(
     format: str = FormatOption,
     email: bool = typer.Option(False, "--email", help="发送策略邮件"),
     cached: bool = typer.Option(False, "--cached", help="使用缓存结果（1天内有效）"),
+    board: str = typer.Option(None, "--board", help="板块过滤: main,chinext,star,bse"),
+    min_turnover: float = typer.Option(None, "--min-turnover", help="最低日均成交额（万元）"),
+    min_strategies: int = typer.Option(None, "--min-strategies", help="至少被N个策略选中"),
 ) -> None:
     """扫描模式：运行所有策略（不同步数据）。加 --cached 使用缓存。"""
     engine, settings, logger = _get_deps()
@@ -195,7 +257,7 @@ def scan(
 
     if cached:
         from sequoia_x.core.cache import load_scan_results
-        cached_results = load_scan_results()
+        cached_results = load_scan_results(board=board, min_turnover=min_turnover)
         if cached_results is not None:
             results = cached_results
             logger.info("使用缓存的扫描结果")
@@ -203,10 +265,15 @@ def scan(
             logger.info("缓存已过期或不存在，执行全量扫描")
 
     if not results:
-        results = _run_all_strategies(engine, settings)
-        # 保存缓存
+        _log_filter(board, min_turnover)
+        results = _run_all_strategies(
+            engine, settings,
+            board=board,
+            min_turnover=min_turnover * 10000 if min_turnover else None,
+        )
+        results = _apply_min_strategies(results, min_strategies)
         from sequoia_x.core.cache import save_scan_results
-        save_scan_results(results)
+        save_scan_results(results, board=board, min_turnover=min_turnover)
 
     for name, symbols in results.items():
         logger.info(f"{name} 选出 {len(symbols)} 只股票")

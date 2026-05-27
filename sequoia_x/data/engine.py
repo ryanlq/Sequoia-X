@@ -10,6 +10,14 @@ from sequoia_x.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# 板块 → 代码前缀映射
+BOARD_PREFIXES: dict[str, tuple[str, ...]] = {
+    "main":    ("60", "00", "001", "002"),
+    "chinext": ("300", "301"),
+    "star":    ("688",),
+    "bse":     ("4", "8"),
+}
+
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS stock_daily (
@@ -447,9 +455,42 @@ class DataEngine:
         finally:
             bs.logout()
 
-    def get_local_symbols(self) -> list[str]:
+    def get_local_symbols(
+        self,
+        board: str | None = None,
+        min_turnover: float | None = None,
+    ) -> list[str]:
+        """获取本地所有股票代码，支持板块和成交额过滤。
+
+        Args:
+            board: 板块过滤，逗号分隔。如 "main" 或 "main,chinext"。
+                   main=主板, chinext=创业板, star=科创板, bse=北交所。
+            min_turnover: 最新一日成交额下限（元）。过滤掉低流动性股票。
+        """
         with sqlite3.connect(self.db_path) as conn:
-            rows = conn.execute(
-                "SELECT DISTINCT symbol FROM stock_daily"
-            ).fetchall()
-        return [row[0] for row in rows]
+            # 基础查询
+            if min_turnover is not None:
+                # 只取最新一天成交额达标的股票
+                rows = conn.execute(
+                    "SELECT DISTINCT symbol FROM stock_daily "
+                    "WHERE date = (SELECT MAX(date) FROM stock_daily) "
+                    "AND turnover >= ?",
+                    (min_turnover,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT DISTINCT symbol FROM stock_daily"
+                ).fetchall()
+
+            symbols = [row[0] for row in rows]
+
+        # 板块过滤（代码前缀匹配）
+        if board:
+            prefixes: list[str] = []
+            for b in board.split(","):
+                prefixes.extend(BOARD_PREFIXES.get(b.strip(), ()))
+            if not prefixes:
+                return []
+            symbols = [s for s in symbols if any(s.startswith(p) for p in prefixes)]
+
+        return symbols
